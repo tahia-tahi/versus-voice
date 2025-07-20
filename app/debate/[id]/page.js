@@ -1,180 +1,204 @@
 "use client";
 
-import PrivateRoute from "@/app/Components/PrivateRoute";
 import { useState, useEffect } from "react";
+import { useParams } from "next/navigation";
 import toast from "react-hot-toast";
 
-export default function DebatePage({ id }) {
+// Helper to allow edits within 5 minutes
+function isWithinFiveMinutes(dateString) {
+  const createdAt = new Date(dateString);
   const now = new Date();
+  const diffInMs = now - createdAt;
+  return diffInMs <= 5 * 60 * 1000;
+}
 
-  const debate = {
-    id,
-    title: "Is Technology Good for Society?",
-    description: "Discuss the pros and cons of technology's impact on our daily lives.",
-    startTime: now,
-    endTime: new Date(now.getTime() + 1 * 60 * 60 * 1000),
-  };
-
-  const [selectedSide, setSelectedSide] = useState(null);
-  const [argument, setArgument] = useState("");
-  const [argumentsList, setArgumentsList] = useState({ support: [], oppose: [] });
-  const [votedArgumentIds, setVotedArgumentIds] = useState([]);
-  const [timeLeft, setTimeLeft] = useState(null);
-  const [debateEnded, setDebateEnded] = useState(false);
+export default function DebateDetailPage() {
+  const { id } = useParams(); // debateId
+  const [debate, setDebate] = useState(null);
+  const [side, setSide] = useState("support");
+  const [text, setText] = useState("");
+  const [argumentsList, setArgumentsList] = useState([]);
+  const user = JSON.parse(localStorage.getItem("user")); // your stored user
 
   useEffect(() => {
-    const interval = setInterval(() => {
-      const now = new Date();
-      const remaining = new Date(debate.endTime) - now;
+    fetch(`/api/debates?id=${id}`)
+      .then((res) => res.json())
+      .then((data) => setDebate(data));
 
-      if (remaining <= 0) {
-        clearInterval(interval);
-        setTimeLeft("00:00:00");
-        setDebateEnded(true);
-      } else {
-        const hours = Math.floor(remaining / (1000 * 60 * 60));
-        const minutes = Math.floor((remaining % (1000 * 60 * 60)) / (1000 * 60));
-        const seconds = Math.floor((remaining % (1000 * 60)) / 1000);
+    fetchArguments();
+  }, [id]);
 
-        setTimeLeft(`${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`);
-      }
-    }, 1000);
+  async function fetchArguments() {
+    const res = await fetch(`/api/arguments?debateId=${id}`);
+    const data = await res.json();
+    setArgumentsList(data);
+  }
 
-    return () => clearInterval(interval);
-  }, [debate.endTime]);
-
-  function handleJoinSide(side) {
-    if (selectedSide && selectedSide !== side) {
-      toast.error("You cannot join both sides in the same debate.");
+  async function handleVote(argumentId) {
+    if (!user) {
+      toast.error("You must be logged in to vote.");
       return;
     }
-    setSelectedSide(side);
-    toast.success(`You joined the ${side === "support" ? "Support" : "Oppose"} side`);
+
+    try {
+      const res = await fetch("/api/votes", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId: user._id, argumentId }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Voting failed");
+
+      toast.success("Vote recorded!");
+      fetchArguments();
+    } catch (err) {
+      toast.error(err.message);
+    }
   }
 
-  function handleSubmitArgument(e) {
+  async function handleSubmit(e) {
     e.preventDefault();
-    if (debateEnded) return toast.error("Debate has ended.");
-    if (!selectedSide) return toast.error("Join a side first.");
-    if (!argument.trim()) return toast.error("Argument cannot be empty.");
 
-    const bannedWords = ["stupid", "idiot", "dumb", "fool"];
-    const lowered = argument.toLowerCase();
-    const containsBanned = bannedWords.some((word) => lowered.includes(word));
-    if (containsBanned) {
-      return toast.error("Your argument contains inappropriate language.");
+    if (!user) {
+      toast.error("You must be logged in to post.");
+      return;
     }
 
-    const newArgument = {
-      id: Date.now(),
-      author: "Tahia", // later from auth
-      text: argument,
-      time: new Date(),
-      votes: 0,
-      debateId: id,
-    };
+    try {
+      const res = await fetch("/api/arguments", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          userId: user._id,
+          debateId: id,
+          side,
+          text,
+        }),
+      });
 
-    setArgumentsList((prev) => ({
-      ...prev,
-      [selectedSide]: [...prev[selectedSide], newArgument],
-    }));
-    toast.success("Argument posted!");
-    setArgument("");
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to post argument");
+
+      toast.success("Argument posted!");
+      setText("");
+      fetchArguments();
+    } catch (err) {
+      toast.error(err.message);
+    }
   }
 
-  function handleVote(side, argId) {
-    if (debateEnded) return toast.error("Voting is closed.");
-    if (votedArgumentIds.includes(argId)) return toast.error("You already voted.");
-    setArgumentsList((prev) => {
-      const updated = prev[side].map((arg) =>
-        arg.id === argId ? { ...arg, votes: arg.votes + 1 } : arg
-      );
-      return { ...prev, [side]: updated };
-    });
-    setVotedArgumentIds((prev) => [...prev, argId]);
-    toast.success("Vote counted!");
+  async function handleEdit(arg) {
+    const newText = prompt("Edit your argument:", arg.text);
+    if (!newText || newText === arg.text) return;
+
+    try {
+      const res = await fetch("/api/arguments", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: arg._id, text: newText }),
+      });
+
+      if (!res.ok) throw new Error("Edit failed");
+
+      toast.success("Argument updated!");
+      fetchArguments();
+    } catch (err) {
+      toast.error(err.message);
+    }
   }
+
+  async function handleDelete(argumentId) {
+    const confirmDelete = confirm("Are you sure you want to delete this argument?");
+    if (!confirmDelete) return;
+
+    try {
+      const res = await fetch("/api/arguments", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: argumentId }),
+      });
+
+      if (!res.ok) throw new Error("Delete failed");
+
+      toast.success("Argument deleted!");
+      fetchArguments();
+    } catch (err) {
+      toast.error(err.message);
+    }
+  }
+
+  if (!debate) return <p>Loading...</p>;
 
   return (
+    <div className="max-w-3xl mx-auto py-10">
+      <h1 className="text-3xl font-bold">{debate.title}</h1>
+      <p className="text-gray-600 mt-2">{debate.description}</p>
 
-    <PrivateRoute>
-
-    <div className="max-w-3xl mx-auto mt-12 p-6 border rounded shadow">
-      <h1 className="text-3xl font-bold mb-2">{debate.title}</h1>
-      <p className="text-sm text-gray-600 mb-2">
-        Time Remaining: <span className="font-semibold text-red-600">{timeLeft || "Loading..."}</span>
-      </p>
-      {debateEnded && (
-        <p className="text-md text-green-700 font-semibold mb-4">⏱️ Debate has ended.</p>
-      )}
-      <p className="mb-6">{debate.description}</p>
-
-      {/* Join Side */}
-      <div className="mb-6 flex gap-4">
-        <button
-          onClick={() => handleJoinSide("support")}
-          className={`px-6 py-2 rounded ${selectedSide === "support" ? "bg-green-600 text-white" : "border"}`}
+      <form onSubmit={handleSubmit} className="mt-6 space-y-4">
+        <select
+          value={side}
+          onChange={(e) => setSide(e.target.value)}
+          className="border p-2 rounded"
         >
-          Support
-        </button>
+          <option value="support">Support</option>
+          <option value="oppose">Oppose</option>
+        </select>
+        <textarea
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          placeholder="Write your argument..."
+          className="border p-2 rounded w-full h-28"
+          required
+        />
         <button
-          onClick={() => handleJoinSide("oppose")}
-          className={`px-6 py-2 rounded ${selectedSide === "oppose" ? "bg-red-600 text-white" : "border"}`}
+          type="submit"
+          className="bg-blue-600 text-white px-4 py-2 rounded"
         >
-          Oppose
+          Post Argument
         </button>
-      </div>
+      </form>
 
-      {/* Argument Form */}
-      {selectedSide && (
-        <form onSubmit={handleSubmitArgument} className="flex flex-col gap-4">
-          <textarea
-            placeholder={`Write your argument for ${selectedSide} side...`}
-            value={argument}
-            onChange={(e) => setArgument(e.target.value)}
-            className="border p-2 rounded resize-none"
-            rows={5}
-            required
-          />
-          <button
-            type="submit"
-            className={`py-3 rounded text-white ${selectedSide === "support" ? "bg-green-600 hover:bg-green-700" : "bg-red-600 hover:bg-red-700"}`}
+      <div className="mt-10">
+        <h2 className="text-xl font-semibold mb-4">Arguments</h2>
+        {argumentsList.map((arg) => (
+          <div
+            key={arg._id}
+            className="border p-4 mb-4 rounded bg-gray-50 shadow"
           >
-            Post Argument
-          </button>
-        </form>
-      )}
+            <p className="text-sm text-gray-500">{arg.side.toUpperCase()}</p>
+            <p className="mt-2">{arg.text}</p>
 
-      {/* Show Arguments */}
-      {["support", "oppose"].map((side) => (
-        <div key={side} className="mt-10">
-          <h2 className="text-xl font-semibold mb-2">{side === "support" ? "Support Side" : "Oppose Side"}</h2>
-          <div className="space-y-4">
-            {argumentsList[side].length === 0 && <p className="text-gray-500">No arguments yet.</p>}
-            {argumentsList[side].map((arg) => (
-              <div key={arg.id} className="border p-4 rounded shadow flex justify-between items-start">
-                <div>
-                  <p className="text-sm text-gray-600 mb-1">By {arg.author} • {new Date(arg.time).toLocaleTimeString()}</p>
-                  <p>{arg.text}</p>
-                </div>
-                <div className="text-center text-sm ml-4 space-y-1">
-                  <p className="text-blue-600 font-semibold">{arg.votes} Votes</p>
-                  <button
-                    onClick={() => handleVote(side, arg.id)}
-                    disabled={votedArgumentIds.includes(arg.id)}
-                    className={`px-2 py-1 text-xs rounded ${votedArgumentIds.includes(arg.id) ? "bg-gray-400 cursor-not-allowed" : "bg-blue-600 hover:bg-blue-700 text-white"}`}
-                  >
-                    {votedArgumentIds.includes(arg.id) ? "Voted" : "Vote"}
-                  </button>
-                </div>
+            <button
+              onClick={() => handleVote(arg._id)}
+              className="mt-2 text-sm bg-green-500 text-white px-3 py-1 rounded hover:bg-green-600"
+            >
+              Vote ({arg.votes})
+            </button>
+
+            <p className="text-xs text-gray-400 mt-1">
+              Posted on {new Date(arg.createdAt).toLocaleString()}
+            </p>
+
+            {arg.userId === user?._id && isWithinFiveMinutes(arg.createdAt) && (
+              <div className="flex gap-2 mt-2 text-sm">
+                <button
+                  onClick={() => handleEdit(arg)}
+                  className="text-blue-600 hover:underline"
+                >
+                  Edit
+                </button>
+                <button
+                  onClick={() => handleDelete(arg._id)}
+                  className="text-red-600 hover:underline"
+                >
+                  Delete
+                </button>
               </div>
-            ))}
+            )}
           </div>
-        </div>
-      ))}
+        ))}
+      </div>
     </div>
-
-    </PrivateRoute>
-
   );
 }

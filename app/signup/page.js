@@ -9,29 +9,43 @@ export default function Signup() {
   const [password, setPassword] = useState("");
   const [image, setImage] = useState("");
 
-  function handleSubmit(e) {
-    e.preventDefault();
+async function handleSubmit(e) {
+  e.preventDefault();
 
-    const newUser = {
-      name,
-      email,
-      image,
-    };
+  try {
+    const res = await fetch("/api/users/signup", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ name, email, password, image }),
+    });
 
-    // Save to localStorage
-    localStorage.setItem("user", JSON.stringify(newUser));
+    const data = await res.json();
 
-    toast.success(`Signup successful for ${name}`);
+    if (!res.ok) {
+      throw new Error(data.error || "Signup failed");
+    }
+
+    toast.success("Signup successful!");
+
+    // Save to localStorage for auth purposes
+    const user = { name, email, image };
+    localStorage.setItem("user", JSON.stringify(user));
 
     // Redirect to home
     window.location.href = "/";
-
-    // Clear form
-    setName("");
-    setEmail("");
-    setPassword("");
-    setImage("");
+  } catch (err) {
+    toast.error(err.message);
   }
+
+  // Clear form
+  setName("");
+  setEmail("");
+  setPassword("");
+  setImage("");
+}
+
 
   return (
     <div className="max-w-md mx-auto mt-20 p-6 border rounded shadow">

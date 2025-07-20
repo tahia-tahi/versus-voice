@@ -2,26 +2,39 @@
 
 import { useState } from "react";
 import toast from "react-hot-toast";
+import { useRouter } from "next/navigation";
 
-export default function Login() {
+export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const router = useRouter();
 
-  function handleSubmit(e) {
+  async function handleSubmit(e) {
     e.preventDefault();
 
-    // Simulated login: you can replace this with a real backend call
-    const user = {
-      email,
-      name: "Demo User",
-      image: "", // Optional
-    };
+    try {
+      const res = await fetch("/api/users/login", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ email, password }),
+      });
 
-    // Save to localStorage
-    localStorage.setItem("user", JSON.stringify(user));
+      const data = await res.json();
 
-    toast.success(`Logged in as ${email}`);
-    window.location.href = "/"; // Redirect to home
+      if (!res.ok) {
+        throw new Error(data.message || "Login failed");
+      }
+
+      // Save user in localStorage
+      localStorage.setItem("user", JSON.stringify(data.user));
+      toast.success(`Welcome back, ${data.user.name}!`);
+
+      router.push("/"); // redirect to home or debates
+    } catch (err) {
+      toast.error(err.message);
+    }
   }
 
   return (
